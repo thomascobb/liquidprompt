@@ -306,6 +306,7 @@ _lp_source_config()
     LP_ENABLE_SCREEN_TITLE=${LP_ENABLE_SCREEN_TITLE:-0}
     LP_ENABLE_SSH_COLORS=${LP_ENABLE_SSH_COLORS:-0}
     # LP_DISABLED_VCS_PATH="${LP_DISABLED_VCS_PATH}"
+    LP_CACHE_SLOW_CMDS=${LP_CACHE_SLOW_CMDS:-0}
 
     LP_MARK_DEFAULT="${LP_MARK_DEFAULT:-$_LP_MARK_SYMBOL}"
     LP_MARK_BATTERY="${LP_MARK_BATTERY:-"⌁"}"
@@ -715,6 +716,42 @@ _lp_are_vcs_enabled()
 
 # GIT #
 
+_lp_async_run()
+{
+    # make a new file async
+    {
+        LC_ALL=C $1 2>/dev/null > "${2}.tmp"
+        mv "${2}.tmp" "$2"
+    } >/dev/null </dev/null &
+    disown
+}
+
+_lp_cached_cmd()
+{
+    if [ "$LP_CACHE_SLOW_CMDS" -eq 0 ]; then
+        LC_ALL=C $1 2>/dev/null
+    else
+        _pwd=$(pwd)
+        fname="/tmp/lp_${_pwd//\//_}_${1//\//_}"
+        if [ -f "$fname" ]; then
+            if [ ! -f "${fname}.tmp" ]; then
+                # mark this as starting
+                touch "${fname}.tmp"
+                # make a new file async
+                _lp_async_run "$1" "${fname}"
+            fi
+            # return the old contents
+            cat "$fname"
+        else
+            # run it now
+            touch "${fname}.tmp"
+            LC_ALL=C $1 2>/dev/null > "${fname}.tmp"
+            mv "${fname}.tmp" "$fname"
+            cat "$fname"
+        fi
+    fi
+}
+
 # Get the branch name of the current directory
 _lp_git_branch()
 {
@@ -750,7 +787,7 @@ _lp_git_branch_color()
 
         local end
         end="$NO_COL"
-        if LC_ALL=C \git status --porcelain 2>/dev/null | grep -Eq '^\?\?'; then
+        if _lp_cached_cmd "git status --porcelain" | grep -Eq '^\?\?'; then
             end="$LP_COLOR_CHANGES$LP_MARK_UNTRACKED$end"
         fi
 
@@ -774,11 +811,11 @@ _lp_git_branch_color()
 
         local ret
         local shortstat # only to check for uncommitted changes
-        shortstat="$(LC_ALL=C \git diff --shortstat HEAD 2>/dev/null)"
+        shortstat="$(_lp_cached_cmd "git diff --shortstat HEAD")"
 
         if [[ -n "$shortstat" ]] ; then
             local u_stat # shorstat of *unstaged* changes
-            u_stat="$(LC_ALL=C \git diff --shortstat 2>/dev/null)"
+            u_stat="$(_lp_cached_cmd "git diff --shortstat")"
             u_stat=${u_stat/*changed, /} # removing "n file(s) changed"
 
             local i_lines # inserted lines
